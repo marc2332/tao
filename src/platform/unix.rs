@@ -9,8 +9,27 @@
   target_os = "openbsd"
 ))]
 
-pub use crate::platform_impl::hit_test;
+use std::sync::Arc;
+
+pub use crate::platform_impl::{ hit_test, x11 };
 use crate::window::{Window, WindowBuilder};
+use crate::event_loop::EventLoopWindowTarget;
+
+/// Additional methods on `EventLoopWindowTarget` that are specific to Unix.
+pub trait EventLoopWindowTargetExtUnix {
+    fn xlib_xconnection(&self) -> Option<Arc<x11::XConnection>>;
+}
+
+impl<T> EventLoopWindowTargetExtUnix for EventLoopWindowTarget<T> {
+    fn xlib_xconnection(&self) -> Option<Arc<x11::XConnection>> {
+        let xlib = x11::X11_BACKEND.lock();
+        if let Ok(x) = &*xlib {
+            Some(x.clone())
+        } else {
+            None
+        }
+    }
+}
 
 /// Additional methods on `Window` that are specific to Unix.
 pub trait WindowExtUnix {
@@ -31,6 +50,7 @@ impl WindowExtUnix for Window {
   }
 }
 
+/// Additional methods on `WindowBuilder` that are specific to Unix.
 pub trait WindowBuilderExtUnix {
   /// Whether to create the window icon with the taskbar icon or not.
   fn with_skip_taskbar(self, skip: bool) -> WindowBuilder;

@@ -19,6 +19,7 @@ mod monitor;
 #[cfg(feature = "tray")]
 mod system_tray;
 mod window;
+pub mod x11;
 
 #[cfg(feature = "tray")]
 pub use self::system_tray::{SystemTray, SystemTrayBuilder};

@@ -1,6 +1,6 @@
 use std::{error::Error, fmt, os::raw::c_int, ptr, sync::Arc, ffi::CStr, mem::MaybeUninit, os::raw::*};
 
-use x11_dl::{ error::OpenError, xlib};
+use x11_dl::{ error::OpenError, xlib, xrender, xrandr, xcursor, xinput2, xlib_xcb};
 use parking_lot::Mutex;
 
 lazy_static! {
@@ -43,7 +43,16 @@ unsafe extern "C" fn x_error_callback(
 /// A connection to an X server.
 pub struct XConnection {
     pub xlib: xlib::Xlib,
+    /// Exposes XRandR functions from version < 1.5
+    pub xrandr: xrandr::Xrandr_2_2_0,
+    /// Exposes XRandR functions from version = 1.5
+    pub xrandr_1_5: Option<xrandr::Xrandr>,
+    pub xcursor: xcursor::Xcursor,
+    pub xinput2: xinput2::XInput2,
+    pub xlib_xcb: xlib_xcb::Xlib_xcb,
+    pub xrender: xrender::Xrender,
     pub display: *mut xlib::Display,
+    pub x11_fd: c_int,
     pub latest_error: Mutex<Option<XError>>,
 }
 
@@ -57,6 +66,12 @@ impl XConnection {
     pub fn new(error_handler: XErrorHandler) -> Result<XConnection, XNotSupported> {
         // opening the libraries
         let xlib = xlib::Xlib::open()?;
+        let xcursor = xcursor::Xcursor::open()?;
+        let xrandr = xrandr::Xrandr_2_2_0::open()?;
+        let xrandr_1_5 = xrandr::Xrandr::open().ok();
+        let xinput2 = xinput2::XInput2::open()?;
+        let xlib_xcb = xlib_xcb::Xlib_xcb::open()?;
+        let xrender = xrender::Xrender::open()?;
 
         unsafe { (xlib.XInitThreads)() };
         unsafe { (xlib.XSetErrorHandler)(error_handler) };
@@ -71,11 +86,18 @@ impl XConnection {
         };
 
         // Get X11 socket file descriptor
-        let fd = unsafe { (xlib.XConnectionNumber)(display) };
+        let x11_fd = unsafe { (xlib.XConnectionNumber)(display) };
 
         Ok(XConnection {
             xlib,
+            xcursor,
+            xinput2,
+            xlib_xcb,
+            xrandr,
+            xrandr_1_5,
+            xrender,
             display,
+            x11_fd,
             latest_error: Mutex::new(None),
         })
     }

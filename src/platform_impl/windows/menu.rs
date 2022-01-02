@@ -4,10 +4,10 @@
 use raw_window_handle::RawWindowHandle;
 use std::{collections::HashMap, fmt, sync::Mutex};
 
-use webview2_com_sys::Windows::Win32::{
+use windows::Win32::{
   Foundation::{HWND, LPARAM, LRESULT, PSTR, PWSTR, WPARAM},
   UI::{
-    KeyboardAndMouseInput::*,
+    Input::KeyboardAndMouse::*,
     Shell::*,
     WindowsAndMessaging::{self as win32wm, *},
   },
@@ -97,14 +97,14 @@ impl MenuItemAttributes {
   }
   pub fn set_title(&mut self, title: &str) {
     unsafe {
-      let mut info = MENUITEMINFOA {
+      let info = MENUITEMINFOA {
         cbSize: std::mem::size_of::<MENUITEMINFOA>() as _,
         fMask: MIIM_STRING,
+        dwTypeData: PSTR(String::from(title).as_mut_ptr()),
         ..Default::default()
       };
-      info.dwTypeData = PSTR(String::from(title).as_mut_ptr());
 
-      SetMenuItemInfoA(self.1, self.0 as u32, false, &mut info);
+      SetMenuItemInfoA(self.1, self.0 as u32, false, &info);
     }
   }
   pub fn set_selected(&mut self, selected: bool) {
@@ -115,8 +115,7 @@ impl MenuItemAttributes {
         match selected {
           true => MF_CHECKED,
           false => MF_UNCHECKED,
-        }
-        .0,
+        },
       );
     }
   }
@@ -229,7 +228,7 @@ impl Menu {
         flags |= MF_DISABLED;
       }
 
-      AppendMenuW(self.hmenu, flags, submenu.hmenu().0 as usize, title);
+      AppendMenuW(self.hmenu, flags, submenu.hmenu() as usize, title);
     }
   }
 
@@ -306,16 +305,16 @@ pub fn initialize(
 
     unsafe {
       SetWindowSubclass(
-        HWND(handle.hwnd as _),
+        handle.hwnd as HWND,
         Some(subclass_proc),
         MENU_SUBCLASS_ID,
         sender as _,
       );
-      SetMenu(HWND(handle.hwnd as _), menu);
+      SetMenu(handle.hwnd as HWND, menu);
     }
 
     if let Some(accels) = menu_builder.accels() {
-      register_accel(HWND(handle.hwnd as _), &accels);
+      register_accel(handle.hwnd as HWND, &accels);
     }
 
     Some(menu)
@@ -341,7 +340,7 @@ pub(crate) unsafe extern "system" fn subclass_proc(
 
   match msg {
     win32wm::WM_COMMAND => {
-      match wparam.0 {
+      match wparam {
         CUT_ID => {
           execute_edit_command(EditCommand::Cut);
         }
@@ -359,7 +358,7 @@ pub(crate) unsafe extern "system" fn subclass_proc(
         }
         CLOSE_ID => {
           subclass_input.send_event(Event::WindowEvent {
-            window_id: RootWindowId(WindowId(hwnd.0)),
+            window_id: RootWindowId(WindowId(hwnd)),
             event: WindowEvent::CloseRequested,
           });
         }
@@ -370,13 +369,13 @@ pub(crate) unsafe extern "system" fn subclass_proc(
           ShowWindow(hwnd, SW_MINIMIZE);
         }
         _ => {
-          let menu_id = util::get_loword(wparam.0 as u32);
+          let menu_id = util::LOWORD(wparam as u32);
           if MENU_IDS.lock().unwrap().contains(&menu_id) {
             subclass_input.send_menu_event(menu_id);
           }
         }
       }
-      LRESULT(0)
+      0
     }
     _ => DefSubclassProc(hwnd, msg, wparam, lparam),
   }
@@ -402,10 +401,10 @@ fn execute_edit_command(command: EditCommand) {
     inputs[0].Anonymous.ki.wVk = VK_CONTROL as _;
 
     inputs[1].r#type = INPUT_KEYBOARD;
-    inputs[1].Anonymous.ki.wVk = key;
+    inputs[1].Anonymous.ki.wVk = key as VIRTUAL_KEY;
 
     inputs[2].r#type = INPUT_KEYBOARD;
-    inputs[2].Anonymous.ki.wVk = key;
+    inputs[2].Anonymous.ki.wVk = key as VIRTUAL_KEY;
     inputs[2].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
 
     inputs[3].r#type = INPUT_KEYBOARD;
@@ -510,6 +509,19 @@ fn format_hotkey(key: Accelerator, s: &mut String) {
     KeyCode::Digit7 => s.push('7'),
     KeyCode::Digit8 => s.push('8'),
     KeyCode::Digit9 => s.push('9'),
+    KeyCode::Comma => s.push(','),
+    KeyCode::Minus => s.push('-'),
+    KeyCode::Period => s.push('.'),
+    KeyCode::Space => s.push_str("Space"),
+    KeyCode::Equal => s.push('='),
+    KeyCode::Semicolon => s.push(';'),
+    KeyCode::Slash => s.push('/'),
+    KeyCode::Backslash => s.push('\\'),
+    KeyCode::Quote => s.push('\''),
+    KeyCode::Backquote => s.push('`'),
+    KeyCode::BracketLeft => s.push('['),
+    KeyCode::BracketRight => s.push(']'),
+    KeyCode::Tab => s.push_str("Tab"),
     KeyCode::Escape => s.push_str("Esc"),
     KeyCode::Delete => s.push_str("Del"),
     KeyCode::Insert => s.push_str("Ins"),

@@ -16,18 +16,16 @@ use std::{
 };
 
 use crossbeam_channel as channel;
-use webview2_com_sys::Windows::Win32::{
+use windows::Win32::{
   Foundation::{self as win32f, HINSTANCE, HWND, LPARAM, LRESULT, POINT, PWSTR, RECT, WPARAM},
-  Globalization::*,
   Graphics::{
     Dwm::{DwmEnableBlurBehindWindow, DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND},
     Gdi::*,
   },
-  System::{Com::*, Diagnostics::Debug::*, LibraryLoader::*},
+  System::{Com::*, LibraryLoader::*, Ole::*},
   UI::{
-    KeyboardAndMouseInput::*,
+    Input::{Ime::*, KeyboardAndMouse::*, Touch::*},
     Shell::*,
-    TouchInput::*,
     WindowsAndMessaging::{self as win32wm, *},
   },
 };
@@ -145,9 +143,6 @@ impl Window {
 
   #[inline]
   pub fn set_visible(&self, visible: bool) {
-    let skip_taskbar = self.window_state.lock().skip_taskbar;
-    let already_skipped = self.window_state.lock().already_skipped;
-
     let window = self.window.clone();
     let window_state = Arc::clone(&self.window_state);
     self.thread_executor.execute_in_thread(move || {
@@ -155,10 +150,6 @@ impl Window {
         f.set(WindowFlags::VISIBLE, visible)
       });
     });
-
-    if visible && skip_taskbar != already_skipped {
-      self.set_skip_taskbar(skip_taskbar);
-    }
   }
 
   #[inline]
@@ -299,14 +290,14 @@ impl Window {
 
   #[inline]
   pub fn hinstance(&self) -> HINSTANCE {
-    HINSTANCE(util::get_window_long_ptr(self.hwnd(), GWLP_HINSTANCE) as _)
+    util::GetWindowLongPtrA(self.hwnd(), GWLP_HINSTANCE)
   }
 
   #[inline]
   pub fn raw_window_handle(&self) -> RawWindowHandle {
     let handle = WindowsHandle {
-      hwnd: self.window.0 .0 as *mut _,
-      hinstance: self.hinstance().0 as *mut _,
+      hwnd: self.window.0 as *mut _,
+      hinstance: self.hinstance() as *mut _,
       ..WindowsHandle::empty()
     };
     RawWindowHandle::Windows(handle)
@@ -390,8 +381,8 @@ impl Window {
       PostMessageW(
         self.window.0,
         WM_NCLBUTTONDOWN,
-        WPARAM(HTCAPTION as _),
-        util::make_x_y_lparam(pos.x as i16, pos.y as i16),
+        HTCAPTION as WPARAM,
+        util::MAKELPARAM(pos.x as i16, pos.y as i16),
       );
     }
 
@@ -400,7 +391,7 @@ impl Window {
 
   #[inline]
   pub fn id(&self) -> WindowId {
-    WindowId(self.window.0 .0)
+    WindowId(self.window.0)
   }
 
   #[inline]
@@ -478,12 +469,12 @@ impl Window {
           // string, so add it
           display_name.push(0);
 
-          let mut native_video_mode = video_mode.video_mode.native_video_mode;
+          let native_video_mode = video_mode.video_mode.native_video_mode;
 
           let res = unsafe {
             ChangeDisplaySettingsExW(
               PWSTR(display_name.as_mut_ptr()),
-              &mut native_video_mode,
+              &native_video_mode,
               HWND::default(),
               CDS_FULLSCREEN,
               std::ptr::null_mut(),
@@ -653,14 +644,14 @@ impl Window {
 
   pub(crate) fn set_ime_position_physical(&self, x: i32, y: i32) {
     if unsafe { GetSystemMetrics(SM_IMMENABLED) } != 0 {
-      let mut composition_form = COMPOSITIONFORM {
+      let composition_form = COMPOSITIONFORM {
         dwStyle: CFS_POINT,
         ptCurrentPos: POINT { x, y },
         rcArea: RECT::default(),
       };
       unsafe {
         let himc = ImmGetContext(self.window.0);
-        ImmSetCompositionWindow(himc, &mut composition_form);
+        ImmSetCompositionWindow(himc, &composition_form);
         ImmReleaseContext(self.window.0, himc);
       }
     }
@@ -688,14 +679,14 @@ impl Window {
         })
         .unwrap_or((FLASHW_STOP, 0));
 
-      let mut flash_info = FLASHWINFO {
+      let flash_info = FLASHWINFO {
         cbSize: mem::size_of::<FLASHWINFO>() as u32,
         hwnd: window.0,
         dwFlags: flags,
         uCount: count,
         dwTimeout: 0,
       };
-      FlashWindowEx(&mut flash_info);
+      FlashWindowEx(&flash_info);
     });
   }
 
@@ -722,7 +713,7 @@ impl Window {
 
   #[inline]
   pub fn is_menu_visible(&self) -> bool {
-    unsafe { !GetMenu(self.hwnd()).is_null() }
+    unsafe { GetMenu(self.hwnd()) != 0 }
   }
 
   #[inline]
@@ -730,7 +721,7 @@ impl Window {
     // `ToUnicode` consumes the dead-key by default, so we are constructing a fake (but valid)
     // key input which we can call `ToUnicode` with.
     unsafe {
-      let vk = VK_SPACE as u32;
+      let vk = u32::from(VK_SPACE);
       let scancode = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
       let kbd_state = [0; 256];
       let mut char_buff = [MaybeUninit::uninit(); 8];
@@ -748,8 +739,8 @@ impl Window {
   #[inline]
   pub fn begin_resize_drag(&self, edge: isize, button: u32, x: i32, y: i32) {
     unsafe {
-      let w_param = WPARAM(edge as usize);
-      let l_param = util::make_x_y_lparam(x as i16, y as i16);
+      let w_param = edge as WPARAM;
+      let l_param = util::MAKELPARAM(x as i16, y as i16);
 
       ReleaseCapture();
       PostMessageW(self.hwnd(), button, w_param, l_param);
@@ -758,23 +749,17 @@ impl Window {
 
   #[inline]
   pub(crate) fn set_skip_taskbar(&self, skip: bool) {
-    let mut window_state = self.window_state.lock();
-    window_state.skip_taskbar = skip;
-
-    if self.is_visible() {
-      unsafe {
-        let taskbar_list: ITaskbarList = CoCreateInstance(&TaskbarList, None, CLSCTX_SERVER)
-          .expect("failed to create TaskBarList");
-        if skip {
-          taskbar_list
-            .DeleteTab(self.hwnd())
-            .expect("DeleteTab failed");
-        } else {
-          taskbar_list.AddTab(self.hwnd()).expect("AddTab failed");
-        }
+    unsafe {
+      com_initialized();
+      let taskbar_list: ITaskbarList =
+        CoCreateInstance(&TaskbarList, None, CLSCTX_SERVER).expect("failed to create TaskBarList");
+      if skip {
+        taskbar_list
+          .DeleteTab(self.hwnd())
+          .expect("DeleteTab failed");
+      } else {
+        taskbar_list.AddTab(self.hwnd()).expect("AddTab failed");
       }
-
-      window_state.already_skipped = skip
     }
   }
 }
@@ -785,7 +770,7 @@ impl Drop for Window {
     unsafe {
       // The window must be destroyed from the same thread that created it, so we send a
       // custom message to be handled by our callback to do the actual work.
-      PostMessageW(self.window.0, *DESTROY_MSG_ID, WPARAM(0), LPARAM(0));
+      PostMessageW(self.window.0, *DESTROY_MSG_ID, 0, 0);
     }
   }
 }
@@ -857,7 +842,7 @@ unsafe fn init<T: 'static>(
       Box::into_raw(Box::new(!attributes.decorations)) as _,
     );
 
-    if handle.is_null() {
+    if handle == 0 {
       return Err(os_error!(OsError::IoError(io::Error::last_os_error())));
     }
 
@@ -903,7 +888,6 @@ unsafe fn init<T: 'static>(
       scale_factor,
       current_theme,
       pl_attribs.preferred_theme,
-      pl_attribs.skip_taskbar,
     );
     let window_state = Arc::new(Mutex::new(window_state));
     WindowState::set_window_flags(window_state.lock(), real_window.0, |f| *f = window_flags);
@@ -1004,7 +988,7 @@ unsafe extern "system" fn window_proc(
   wparam: WPARAM,
   lparam: LPARAM,
 ) -> LRESULT {
-  let mut userdata = util::get_window_long_ptr(window, GWL_USERDATA);
+  let mut userdata = util::GetWindowLongPtrA(window, GWL_USERDATA);
 
   match msg {
     win32wm::WM_NCCALCSIZE => {
@@ -1014,11 +998,11 @@ unsafe extern "system" fn window_proc(
         if util::is_maximized(window) {
           let monitor = monitor::current_monitor(window);
           if let Ok(monitor_info) = monitor::get_monitor_info(monitor.hmonitor()) {
-            let params = &mut *(lparam.0 as *mut NCCALCSIZE_PARAMS);
-            params.rgrc[0] = monitor_info.__AnonymousBase_winuser_L13558_C43.rcWork;
+            let params = &mut *(lparam as *mut NCCALCSIZE_PARAMS);
+            params.rgrc[0] = monitor_info.monitorInfo.rcWork;
           }
         }
-        LRESULT(0) // return 0 here to make the windowo borderless
+        0 // return 0 here to make the window borderless
       } else {
         DefWindowProcW(window, msg, wparam, lparam)
       }
@@ -1026,9 +1010,9 @@ unsafe extern "system" fn window_proc(
     win32wm::WM_NCCREATE => {
       // Set userdata to the value of lparam. This will be cleared on event loop subclassing.
       if userdata == 0 {
-        let createstruct = &*(lparam.0 as *const CREATESTRUCTW);
+        let createstruct = &*(lparam as *const CREATESTRUCTW);
         userdata = createstruct.lpCreateParams as isize;
-        util::set_window_long_ptr(window, GWL_USERDATA, userdata);
+        util::SetWindowLongPtrA(window, GWL_USERDATA, userdata);
       }
       DefWindowProcW(window, msg, wparam, lparam)
     }
@@ -1077,7 +1061,8 @@ unsafe fn taskbar_mark_fullscreen(handle: HWND, fullscreen: bool) {
     let mut task_bar_list = task_bar_list_ptr.borrow().clone();
 
     if task_bar_list.is_none() {
-      let result: windows::Result<ITaskbarList2> = CoCreateInstance(&TaskbarList, None, CLSCTX_ALL);
+      let result: windows::core::Result<ITaskbarList2> =
+        CoCreateInstance(&TaskbarList, None, CLSCTX_ALL);
       if let Ok(created) = result {
         if let Ok(()) = created.HrInit() {
           task_bar_list = Some(created);
@@ -1102,7 +1087,7 @@ unsafe fn force_window_active(handle: HWND) {
   // This is a little hack which can "steal" the foreground window permission
   // We only call this function in the window creation, so it should be fine.
   // See : https://stackoverflow.com/questions/10740346/setforegroundwindow-only-working-while-visual-studio-is-open
-  let alt_sc = MapVirtualKeyW(VK_MENU as _, MAPVK_VK_TO_VSC);
+  let alt_sc = MapVirtualKeyW(u32::from(VK_MENU), MAPVK_VK_TO_VSC);
 
   let mut inputs: [INPUT; 2] = mem::zeroed();
   inputs[0].r#type = INPUT_KEYBOARD;
@@ -1129,15 +1114,15 @@ pub fn hit_test(hwnd: HWND, cx: i32, cy: i32) -> LRESULT {
   let mut window_rect = RECT::default();
   unsafe {
     if GetWindowRect(hwnd, <*mut _>::cast(&mut window_rect)).as_bool() {
-      const CLIENT: i32 = 0b0000;
-      const LEFT: i32 = 0b0001;
-      const RIGHT: i32 = 0b0010;
-      const TOP: i32 = 0b0100;
-      const BOTTOM: i32 = 0b1000;
-      const TOPLEFT: i32 = TOP | LEFT;
-      const TOPRIGHT: i32 = TOP | RIGHT;
-      const BOTTOMLEFT: i32 = BOTTOM | LEFT;
-      const BOTTOMRIGHT: i32 = BOTTOM | RIGHT;
+      const CLIENT: isize = 0b0000;
+      const LEFT: isize = 0b0001;
+      const RIGHT: isize = 0b0010;
+      const TOP: isize = 0b0100;
+      const BOTTOM: isize = 0b1000;
+      const TOPLEFT: isize = TOP | LEFT;
+      const TOPRIGHT: isize = TOP | RIGHT;
+      const BOTTOMLEFT: isize = BOTTOM | LEFT;
+      const BOTTOMRIGHT: isize = BOTTOM | RIGHT;
 
       let RECT {
         left,
@@ -1152,7 +1137,7 @@ pub fn hit_test(hwnd: HWND, cx: i32, cy: i32) -> LRESULT {
         | (TOP * (if cy < (top + BORDERLESS_RESIZE_INSET) { 1 } else { 0 }))
         | (BOTTOM * (if cy >= (bottom - BORDERLESS_RESIZE_INSET) { 1 } else { 0 }));
 
-      LRESULT(match result {
+      (match result {
         CLIENT => HTCLIENT,
         LEFT => HTLEFT,
         RIGHT => HTRIGHT,
@@ -1163,9 +1148,9 @@ pub fn hit_test(hwnd: HWND, cx: i32, cy: i32) -> LRESULT {
         BOTTOMLEFT => HTBOTTOMLEFT,
         BOTTOMRIGHT => HTBOTTOMRIGHT,
         _ => HTNOWHERE,
-      } as i32)
+      }) as LRESULT
     } else {
-      LRESULT(HTNOWHERE as i32)
+      HTNOWHERE as LRESULT
     }
   }
 }

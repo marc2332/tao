@@ -5,7 +5,7 @@ use crate::{
   global_shortcut::{GlobalShortcut as RootGlobalShortcut, ShortcutManagerError},
   keyboard::ModifiersState,
 };
-use webview2_com_sys::Windows::Win32::{Foundation::HWND, UI::KeyboardAndMouseInput::*};
+use windows::Win32::{Foundation::HWND, UI::Input::KeyboardAndMouse::*};
 
 #[derive(Debug, Clone)]
 pub struct ShortcutManager {
@@ -24,7 +24,7 @@ impl ShortcutManager {
     accelerator: Accelerator,
   ) -> Result<RootGlobalShortcut, ShortcutManagerError> {
     unsafe {
-      let mut converted_modifiers = HOT_KEY_MODIFIERS(0);
+      let mut converted_modifiers = 0;
       let modifiers: ModifiersState = accelerator.mods;
       if modifiers.shift_key() {
         converted_modifiers |= MOD_SHIFT;
@@ -46,7 +46,7 @@ impl ShortcutManager {
             HWND::default(),
             accelerator.clone().id().0 as i32,
             converted_modifiers,
-            vk_code as u32,
+            u32::from(vk_code),
           );
           if !result.as_bool() {
             return Err(ShortcutManagerError::InvalidAccelerator(

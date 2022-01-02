@@ -2,15 +2,15 @@ use crate::{
   keyboard::{KeyCode, NativeKeyCode},
   platform_impl::platform::util,
 };
-use webview2_com_sys::Windows::Win32::{
-  System::SystemServices::LANG_KOREAN, UI::KeyboardAndMouseInput::GetKeyboardLayout,
+use windows::Win32::{
+  System::SystemServices::LANG_KOREAN, UI::Input::KeyboardAndMouse::GetKeyboardLayout,
 };
 
 pub fn keycode_to_scancode(code: KeyCode) -> Option<u32> {
   // See `from_scancode` for more info
   let hkl = unsafe { GetKeyboardLayout(0) };
 
-  let primary_lang_id = util::primary_lang_id(hkl);
+  let primary_lang_id = util::PRIMARYLANGID(hkl);
   let is_korean = primary_lang_id == LANG_KOREAN;
 
   match code {

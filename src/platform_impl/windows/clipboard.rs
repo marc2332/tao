@@ -3,7 +3,7 @@
 
 use crate::clipboard::{ClipboardFormat, FormatId};
 use std::{ffi::OsStr, os::windows::ffi::OsStrExt, ptr};
-use webview2_com_sys::Windows::Win32::{
+use windows::Win32::{
   Foundation::{HANDLE, HWND, PSTR, PWSTR},
   System::{
     DataExchange::{
@@ -27,8 +27,8 @@ impl Clipboard {
 
   pub(crate) fn read_text(&self) -> Option<String> {
     with_clipboard(|| unsafe {
-      let handle = GetClipboardData(CF_UNICODETEXT.0);
-      if handle.is_null() {
+      let handle = GetClipboardData(CF_UNICODETEXT);
+      if handle.0 == 0 {
         None
       } else {
         let unic_str = PWSTR(GlobalLock(handle.0) as *mut _);
@@ -63,11 +63,11 @@ impl Clipboard {
           }
         };
         let result = SetClipboardData(format_id, handle);
-        if result.is_null() {
+        if result.0 == 0 {
           println!(
             "failed to set clipboard for fmt {}, error: {}",
             &format.identifier,
-            windows::HRESULT::from_thread().0
+            windows::core::Error::from_win32().code().0
           );
         }
       }
@@ -80,7 +80,7 @@ fn get_format_id(format: FormatId) -> Option<u32> {
     return Some(*id);
   }
   match format {
-    ClipboardFormat::TEXT => Some(CF_UNICODETEXT.0),
+    ClipboardFormat::TEXT => Some(CF_UNICODETEXT),
     other => register_identifier(other),
   }
 }
@@ -89,7 +89,7 @@ fn register_identifier(ident: &str) -> Option<u32> {
   unsafe {
     let pb_format = RegisterClipboardFormatA(ident);
     if pb_format == 0 {
-      let err = windows::HRESULT::from_thread().0;
+      let err = windows::core::Error::from_win32().code().0;
       println!(
         "failed to register clipboard format '{}'; error {}.",
         ident, err

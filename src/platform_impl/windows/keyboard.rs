@@ -3,10 +3,10 @@ use std::{
   sync::MutexGuard,
 };
 
-use webview2_com_sys::Windows::Win32::{
+use windows::Win32::{
   Foundation::{HWND, LPARAM, WPARAM},
   UI::{
-    KeyboardAndMouseInput::*,
+    Input::KeyboardAndMouse::{self as win32km, *},
     TextServices::HKL,
     WindowsAndMessaging::{self as win32wm, *},
   },
@@ -91,7 +91,7 @@ impl KeyEventBuilder {
         }
       }
       win32wm::WM_KEYDOWN | win32wm::WM_SYSKEYDOWN => {
-        if msg_kind == WM_SYSKEYDOWN && wparam.0 as u32 == VK_F4 {
+        if msg_kind == WM_SYSKEYDOWN && wparam == usize::from(VK_F4) {
           // Don't dispatch Alt+F4 to the application.
           // This is handled in `event_loop.rs`
           return vec![];
@@ -118,10 +118,10 @@ impl KeyEventBuilder {
         if has_next_key_message {
           let next_msg = unsafe { next_msg.assume_init() };
           let next_msg_kind = next_msg.message;
-          let next_belongs_to_this = next_msg_kind == WM_KEYDOWN
-            || next_msg_kind == WM_SYSKEYDOWN
-            || next_msg_kind == WM_KEYUP
-            || next_msg_kind == WM_SYSKEYUP;
+          let next_belongs_to_this = !matches!(
+            next_msg_kind,
+            win32wm::WM_KEYDOWN | win32wm::WM_SYSKEYDOWN | win32wm::WM_KEYUP | win32wm::WM_SYSKEYUP
+          );
           if next_belongs_to_this {
             self.event_info = finished_event_info.take();
           } else {
@@ -161,8 +161,8 @@ impl KeyEventBuilder {
           return vec![];
         }
         *result = ProcResult::Value(0);
-        let is_high_surrogate = 0xD800 <= wparam.0 && wparam.0 <= 0xDBFF;
-        let is_low_surrogate = 0xDC00 <= wparam.0 && wparam.0 <= 0xDFFF;
+        let is_high_surrogate = (0xD800..=0xDBFF).contains(&wparam);
+        let is_low_surrogate = (0xDC00..=0xDFFF).contains(&wparam);
 
         let is_utf16 = is_high_surrogate || is_low_surrogate;
 
@@ -191,7 +191,7 @@ impl KeyEventBuilder {
 
         if is_utf16 {
           if let Some(ev_info) = self.event_info.as_mut() {
-            ev_info.utf16parts.push(wparam.0 as u16);
+            ev_info.utf16parts.push(wparam as u16);
           }
         } else {
           // In this case, wparam holds a UTF-32 character.
@@ -206,7 +206,7 @@ impl KeyEventBuilder {
           let start_offset = utf16parts.len();
           let new_size = utf16parts.len() + 2;
           utf16parts.resize(new_size, 0);
-          if let Some(ch) = char::from_u32(wparam.0 as u32) {
+          if let Some(ch) = char::from_u32(wparam as u32) {
             let encode_len = ch.encode_utf16(&mut utf16parts[start_offset..]).len();
             let new_size = start_offset + encode_len;
             utf16parts.resize(new_size, 0);
@@ -242,7 +242,7 @@ impl KeyEventBuilder {
             event_info.text = PartialText::System(event_info.utf16parts.clone());
           } else {
             let mod_no_ctrl = mod_state.remove_only_ctrl();
-            let num_lock_on = kbd_state[VK_NUMLOCK as usize] & 1 != 0;
+            let num_lock_on = kbd_state[usize::from(VK_NUMLOCK)] & 1 != 0;
             let vkey = event_info.vkey;
             let scancode = event_info.scancode;
             let keycode = event_info.code;
@@ -309,12 +309,12 @@ impl KeyEventBuilder {
     let mut layouts = LAYOUT_CACHE.lock().unwrap();
     let (locale_id, _) = layouts.get_current_layout();
 
-    let is_key_pressed = |vk: u32| &kbd_state[vk as usize] & 0x80 != 0;
+    let is_key_pressed = |vk: VIRTUAL_KEY| &kbd_state[usize::from(vk)] & 0x80 != 0;
 
     // Is caps-lock active? Note that this is different from caps-lock
     // being held down.
-    let caps_lock_on = kbd_state[VK_CAPITAL as usize] & 1 != 0;
-    let num_lock_on = kbd_state[VK_NUMLOCK as usize] & 1 != 0;
+    let caps_lock_on = kbd_state[usize::from(VK_CAPITAL)] & 1 != 0;
+    let num_lock_on = kbd_state[usize::from(VK_NUMLOCK)] & 1 != 0;
 
     // We are synthesizing the press event for caps-lock first for the following reasons:
     // 1. If caps-lock is *not* held down but *is* active, then we have to
@@ -342,6 +342,7 @@ impl KeyEventBuilder {
     }
     let do_non_modifier = |key_events: &mut Vec<_>, layouts: &mut _| {
       for vk in 0..256 {
+        let vk = vk as VIRTUAL_KEY;
         match vk {
           _ if vk == VK_CONTROL
             || vk == VK_LCONTROL
@@ -375,7 +376,7 @@ impl KeyEventBuilder {
       }
     };
     let do_modifier = |key_events: &mut Vec<_>, layouts: &mut _| {
-      const CLEAR_MODIFIER_VKS: [u32; 6] = [
+      const CLEAR_MODIFIER_VKS: [VIRTUAL_KEY; 6] = [
         VK_LCONTROL,
         VK_LSHIFT,
         VK_LMENU,
@@ -419,14 +420,14 @@ impl KeyEventBuilder {
 
   fn create_synthetic(
     &self,
-    vk: u32,
+    vk: VIRTUAL_KEY,
     key_state: ElementState,
     caps_lock_on: bool,
     num_lock_on: bool,
     locale_id: HKL,
     layouts: &mut MutexGuard<'_, LayoutCache>,
   ) -> Option<MessageAsKeyEvent> {
-    let scancode = unsafe { MapVirtualKeyExW(vk as u32, MAPVK_VK_TO_VSC_EX, locale_id) };
+    let scancode = unsafe { MapVirtualKeyExW(u32::from(vk), MAPVK_VK_TO_VSC_EX, locale_id) };
     if scancode == 0 {
       return None;
     }
@@ -437,7 +438,7 @@ impl KeyEventBuilder {
     } else {
       WindowsModifiers::empty()
     };
-    let layout = layouts.layouts.get(&locale_id.0).unwrap();
+    let layout = layouts.layouts.get(&locale_id).unwrap();
     let logical_key = layout.get_key(mods, num_lock_on, vk, scancode, code);
     let key_without_modifiers =
       layout.get_key(WindowsModifiers::empty(), false, vk, scancode, code);
@@ -488,7 +489,7 @@ enum PartialLogicalKey {
 }
 
 struct PartialKeyEventInfo {
-  vkey: u32,
+  vkey: VIRTUAL_KEY,
   scancode: ExScancode,
   key_state: ElementState,
   is_repeat: bool,
@@ -517,11 +518,12 @@ impl PartialKeyEventInfo {
     let (_, layout) = layouts.get_current_layout();
     let lparam_struct = destructure_key_lparam(lparam);
     let scancode;
-    let vkey = wparam.0 as u32;
+    let vkey = wparam as VIRTUAL_KEY;
     if lparam_struct.scancode == 0 {
       // In some cases (often with media keys) the device reports a scancode of 0 but a
       // valid virtual key. In these cases we obtain the scancode from the virtual key.
-      scancode = unsafe { MapVirtualKeyExW(vkey as u32, MAPVK_VK_TO_VSC_EX, layout.hkl) as u16 };
+      scancode =
+        unsafe { MapVirtualKeyExW(u32::from(vkey), MAPVK_VK_TO_VSC_EX, layout.hkl) as u16 };
     } else {
       scancode = new_ex_scancode(lparam_struct.scancode, lparam_struct.extended);
     }
@@ -667,11 +669,11 @@ struct KeyLParam {
 }
 
 fn destructure_key_lparam(lparam: LPARAM) -> KeyLParam {
-  let previous_state = (lparam.0 >> 30) & 0x01;
-  let transition_state = (lparam.0 >> 31) & 0x01;
+  let previous_state = (lparam >> 30) & 0x01;
+  let transition_state = (lparam >> 31) & 0x01;
   KeyLParam {
-    scancode: ((lparam.0 >> 16) & 0xFF) as u8,
-    extended: ((lparam.0 >> 24) & 0x01) != 0,
+    scancode: ((lparam >> 16) & 0xFF) as u8,
+    extended: ((lparam >> 24) & 0x01) != 0,
     is_repeat: (previous_state ^ transition_state) != 0,
   }
 }
@@ -703,16 +705,19 @@ fn get_async_kbd_state() -> [u8; 256] {
   unsafe {
     let mut kbd_state: [u8; 256] = [0; 256];
     for (vk, state) in kbd_state.iter_mut().enumerate() {
-      let vk = vk as u32;
-      let async_state = GetAsyncKeyState(vk as i32);
+      let vk = vk as VIRTUAL_KEY;
+      let async_state = GetAsyncKeyState(i32::from(vk));
       let is_down = (async_state & (1 << 15)) != 0;
       if is_down {
         *state = 0x80;
       }
 
-      if matches!(vk, VK_CAPITAL | VK_NUMLOCK | VK_SCROLL) {
+      if matches!(
+        vk,
+        win32km::VK_CAPITAL | win32km::VK_NUMLOCK | win32km::VK_SCROLL
+      ) {
         // Toggle states aren't reported by `GetAsyncKeyState`
-        let toggle_state = GetKeyState(vk as i32);
+        let toggle_state = GetKeyState(i32::from(vk));
         let is_active = (toggle_state & 1) != 0;
         *state |= if is_active { 1 } else { 0 };
       }
@@ -740,99 +745,110 @@ fn is_current_fake(curr_info: &PartialKeyEventInfo, next_msg: MSG, layout: &Layo
 }
 
 fn get_location(scancode: ExScancode, hkl: HKL) -> KeyLocation {
-  const VK_ABNT_C2: u32 = 0xc2;
+  const VK_ABNT_C2: VIRTUAL_KEY = win32km::VK_ABNT_C2 as VIRTUAL_KEY;
 
   let extension = 0xE000;
   let extended = (scancode & extension) == extension;
-  let vkey = unsafe { MapVirtualKeyExW(scancode as u32, MAPVK_VSC_TO_VK_EX, hkl) };
+  let vkey = unsafe { MapVirtualKeyExW(scancode as u32, MAPVK_VSC_TO_VK_EX, hkl) as u16 };
 
   // Use the native VKEY and the extended flag to cover most cases
   // This is taken from the `druid` GUI library, specifically
   // druid-shell/src/platform/windows/keyboard.rs
   match vkey {
-    win32wm::VK_LSHIFT | win32wm::VK_LCONTROL | win32wm::VK_LMENU | win32wm::VK_LWIN => {
+    win32km::VK_LSHIFT | win32km::VK_LCONTROL | win32km::VK_LMENU | win32km::VK_LWIN => {
       KeyLocation::Left
     }
-    win32wm::VK_RSHIFT | win32wm::VK_RCONTROL | win32wm::VK_RMENU | win32wm::VK_RWIN => {
+    win32km::VK_RSHIFT | win32km::VK_RCONTROL | win32km::VK_RMENU | win32km::VK_RWIN => {
       KeyLocation::Right
     }
-    win32wm::VK_RETURN if extended => KeyLocation::Numpad,
-    win32wm::VK_INSERT
-    | win32wm::VK_DELETE
-    | win32wm::VK_END
-    | win32wm::VK_DOWN
-    | win32wm::VK_NEXT
-    | win32wm::VK_LEFT
-    | win32wm::VK_CLEAR
-    | win32wm::VK_RIGHT
-    | win32wm::VK_HOME
-    | win32wm::VK_UP
-    | win32wm::VK_PRIOR => {
+    win32km::VK_RETURN if extended => KeyLocation::Numpad,
+    win32km::VK_INSERT
+    | win32km::VK_DELETE
+    | win32km::VK_END
+    | win32km::VK_DOWN
+    | win32km::VK_NEXT
+    | win32km::VK_LEFT
+    | win32km::VK_CLEAR
+    | win32km::VK_RIGHT
+    | win32km::VK_HOME
+    | win32km::VK_UP
+    | win32km::VK_PRIOR => {
       if extended {
         KeyLocation::Standard
       } else {
         KeyLocation::Numpad
       }
     }
-    win32wm::VK_NUMPAD0
-    | win32wm::VK_NUMPAD1
-    | win32wm::VK_NUMPAD2
-    | win32wm::VK_NUMPAD3
-    | win32wm::VK_NUMPAD4
-    | win32wm::VK_NUMPAD5
-    | win32wm::VK_NUMPAD6
-    | win32wm::VK_NUMPAD7
-    | win32wm::VK_NUMPAD8
-    | win32wm::VK_NUMPAD9
-    | win32wm::VK_DECIMAL
-    | win32wm::VK_DIVIDE
-    | win32wm::VK_MULTIPLY
-    | win32wm::VK_SUBTRACT
-    | win32wm::VK_ADD
+    win32km::VK_NUMPAD0
+    | win32km::VK_NUMPAD1
+    | win32km::VK_NUMPAD2
+    | win32km::VK_NUMPAD3
+    | win32km::VK_NUMPAD4
+    | win32km::VK_NUMPAD5
+    | win32km::VK_NUMPAD6
+    | win32km::VK_NUMPAD7
+    | win32km::VK_NUMPAD8
+    | win32km::VK_NUMPAD9
+    | win32km::VK_DECIMAL
+    | win32km::VK_DIVIDE
+    | win32km::VK_MULTIPLY
+    | win32km::VK_SUBTRACT
+    | win32km::VK_ADD
     | VK_ABNT_C2 => KeyLocation::Numpad,
     _ => KeyLocation::Standard,
   }
 }
 
 // used to build accelerators table from Key
-pub(crate) fn key_to_vk(key: &KeyCode) -> Option<u32> {
+pub(crate) fn key_to_vk(key: &KeyCode) -> Option<VIRTUAL_KEY> {
   Some(match key {
-    KeyCode::KeyA => unsafe { VkKeyScanW('a' as u16) as u32 },
-    KeyCode::KeyB => unsafe { VkKeyScanW('b' as u16) as u32 },
-    KeyCode::KeyC => unsafe { VkKeyScanW('c' as u16) as u32 },
-    KeyCode::KeyD => unsafe { VkKeyScanW('d' as u16) as u32 },
-    KeyCode::KeyE => unsafe { VkKeyScanW('e' as u16) as u32 },
-    KeyCode::KeyF => unsafe { VkKeyScanW('f' as u16) as u32 },
-    KeyCode::KeyG => unsafe { VkKeyScanW('g' as u16) as u32 },
-    KeyCode::KeyH => unsafe { VkKeyScanW('h' as u16) as u32 },
-    KeyCode::KeyI => unsafe { VkKeyScanW('i' as u16) as u32 },
-    KeyCode::KeyJ => unsafe { VkKeyScanW('j' as u16) as u32 },
-    KeyCode::KeyK => unsafe { VkKeyScanW('k' as u16) as u32 },
-    KeyCode::KeyL => unsafe { VkKeyScanW('l' as u16) as u32 },
-    KeyCode::KeyM => unsafe { VkKeyScanW('m' as u16) as u32 },
-    KeyCode::KeyN => unsafe { VkKeyScanW('n' as u16) as u32 },
-    KeyCode::KeyO => unsafe { VkKeyScanW('o' as u16) as u32 },
-    KeyCode::KeyP => unsafe { VkKeyScanW('p' as u16) as u32 },
-    KeyCode::KeyQ => unsafe { VkKeyScanW('q' as u16) as u32 },
-    KeyCode::KeyR => unsafe { VkKeyScanW('r' as u16) as u32 },
-    KeyCode::KeyS => unsafe { VkKeyScanW('s' as u16) as u32 },
-    KeyCode::KeyT => unsafe { VkKeyScanW('t' as u16) as u32 },
-    KeyCode::KeyU => unsafe { VkKeyScanW('u' as u16) as u32 },
-    KeyCode::KeyV => unsafe { VkKeyScanW('v' as u16) as u32 },
-    KeyCode::KeyW => unsafe { VkKeyScanW('w' as u16) as u32 },
-    KeyCode::KeyX => unsafe { VkKeyScanW('x' as u16) as u32 },
-    KeyCode::KeyY => unsafe { VkKeyScanW('y' as u16) as u32 },
-    KeyCode::KeyZ => unsafe { VkKeyScanW('z' as u16) as u32 },
-    KeyCode::Digit0 => unsafe { VkKeyScanW('0' as u16) as u32 },
-    KeyCode::Digit1 => unsafe { VkKeyScanW('1' as u16) as u32 },
-    KeyCode::Digit2 => unsafe { VkKeyScanW('2' as u16) as u32 },
-    KeyCode::Digit3 => unsafe { VkKeyScanW('3' as u16) as u32 },
-    KeyCode::Digit4 => unsafe { VkKeyScanW('4' as u16) as u32 },
-    KeyCode::Digit5 => unsafe { VkKeyScanW('5' as u16) as u32 },
-    KeyCode::Digit6 => unsafe { VkKeyScanW('6' as u16) as u32 },
-    KeyCode::Digit7 => unsafe { VkKeyScanW('7' as u16) as u32 },
-    KeyCode::Digit8 => unsafe { VkKeyScanW('8' as u16) as u32 },
-    KeyCode::Digit9 => unsafe { VkKeyScanW('9' as u16) as u32 },
+    KeyCode::KeyA => unsafe { VkKeyScanW('a' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyB => unsafe { VkKeyScanW('b' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyC => unsafe { VkKeyScanW('c' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyD => unsafe { VkKeyScanW('d' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyE => unsafe { VkKeyScanW('e' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyF => unsafe { VkKeyScanW('f' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyG => unsafe { VkKeyScanW('g' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyH => unsafe { VkKeyScanW('h' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyI => unsafe { VkKeyScanW('i' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyJ => unsafe { VkKeyScanW('j' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyK => unsafe { VkKeyScanW('k' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyL => unsafe { VkKeyScanW('l' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyM => unsafe { VkKeyScanW('m' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyN => unsafe { VkKeyScanW('n' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyO => unsafe { VkKeyScanW('o' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyP => unsafe { VkKeyScanW('p' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyQ => unsafe { VkKeyScanW('q' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyR => unsafe { VkKeyScanW('r' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyS => unsafe { VkKeyScanW('s' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyT => unsafe { VkKeyScanW('t' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyU => unsafe { VkKeyScanW('u' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyV => unsafe { VkKeyScanW('v' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyW => unsafe { VkKeyScanW('w' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyX => unsafe { VkKeyScanW('x' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyY => unsafe { VkKeyScanW('y' as u16) as VIRTUAL_KEY },
+    KeyCode::KeyZ => unsafe { VkKeyScanW('z' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit0 => unsafe { VkKeyScanW('0' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit1 => unsafe { VkKeyScanW('1' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit2 => unsafe { VkKeyScanW('2' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit3 => unsafe { VkKeyScanW('3' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit4 => unsafe { VkKeyScanW('4' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit5 => unsafe { VkKeyScanW('5' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit6 => unsafe { VkKeyScanW('6' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit7 => unsafe { VkKeyScanW('7' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit8 => unsafe { VkKeyScanW('8' as u16) as VIRTUAL_KEY },
+    KeyCode::Digit9 => unsafe { VkKeyScanW('9' as u16) as VIRTUAL_KEY },
+    KeyCode::Comma => VK_OEM_COMMA,
+    KeyCode::Minus => VK_OEM_MINUS,
+    KeyCode::Period => VK_OEM_PERIOD,
+    KeyCode::Equal => unsafe { VkKeyScanW('=' as u16) as VIRTUAL_KEY },
+    KeyCode::Semicolon => unsafe { VkKeyScanW(';' as u16) as VIRTUAL_KEY },
+    KeyCode::Slash => unsafe { VkKeyScanW('/' as u16) as VIRTUAL_KEY },
+    KeyCode::Backslash => unsafe { VkKeyScanW('\\' as u16) as VIRTUAL_KEY },
+    KeyCode::Quote => unsafe { VkKeyScanW('\'' as u16) as VIRTUAL_KEY },
+    KeyCode::Backquote => unsafe { VkKeyScanW('`' as u16) as VIRTUAL_KEY },
+    KeyCode::BracketLeft => unsafe { VkKeyScanW('[' as u16) as VIRTUAL_KEY },
+    KeyCode::BracketRight => unsafe { VkKeyScanW(']' as u16) as VIRTUAL_KEY },
     KeyCode::Backspace => VK_BACK,
     KeyCode::Tab => VK_TAB,
     KeyCode::Space => VK_SPACE,
@@ -874,6 +890,11 @@ pub(crate) fn key_to_vk(key: &KeyCode) -> Option<u32> {
     KeyCode::F17 => VK_F17,
     KeyCode::F18 => VK_F18,
     KeyCode::F19 => VK_F19,
+    KeyCode::F20 => VK_F20,
+    KeyCode::F21 => VK_F21,
+    KeyCode::F22 => VK_F22,
+    KeyCode::F23 => VK_F23,
+    KeyCode::F24 => VK_F24,
     KeyCode::NumLock => VK_NUMLOCK,
     KeyCode::ScrollLock => VK_SCROLL,
     KeyCode::BrowserBack => VK_BROWSER_BACK,

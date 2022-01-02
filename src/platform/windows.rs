@@ -15,9 +15,9 @@ use crate::{
   window::{BadIcon, Icon, Theme, Window, WindowBuilder},
 };
 use libc;
-use webview2_com_sys::Windows::Win32::{
+use windows::Win32::{
   Foundation::HWND,
-  UI::{KeyboardAndMouseInput::*, WindowsAndMessaging::*},
+  UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
 };
 
 /// Additional methods on `EventLoop` that are specific to Windows.
@@ -120,12 +120,12 @@ pub trait WindowExtWindows {
 impl WindowExtWindows for Window {
   #[inline]
   fn hinstance(&self) -> *mut libc::c_void {
-    self.window.hinstance().0 as _
+    self.window.hinstance() as _
   }
 
   #[inline]
   fn hwnd(&self) -> *mut libc::c_void {
-    self.window.hwnd().0 as _
+    self.window.hwnd() as _
   }
 
   #[inline]
@@ -186,7 +186,7 @@ pub trait WindowBuilderExtWindows {
   ///
   /// Parent and menu are mutually exclusive; a child window cannot have a menu!
   ///
-  /// The menu must have been manually created beforehand with [`webview2_com_sys::Windows::Win32::UI::WindowsAndMessaging::CreateMenu`]
+  /// The menu must have been manually created beforehand with [`windows::Win32::UI::WindowsAndMessaging::CreateMenu`]
   /// or similar.
   ///
   /// Note: Dark mode cannot be supported for win32 menus, it's simply not possible to change how the menus look.
@@ -281,7 +281,7 @@ impl MonitorHandleExtWindows for MonitorHandle {
 
   #[inline]
   fn hmonitor(&self) -> *mut libc::c_void {
-    self.inner.hmonitor().0 as _
+    self.inner.hmonitor() as _
   }
 }
 

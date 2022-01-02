@@ -14,9 +14,9 @@ use crate::{dpi::PhysicalSize, window::CursorIcon};
 use windows::{
   core::HRESULT,
   Win32::{
-    Foundation::{BOOL, FARPROC, HWND, LPARAM, LRESULT, POINT, PWSTR, RECT, WPARAM},
+    Foundation::{BOOL, FARPROC, HANDLE, HWND, LPARAM, LRESULT, POINT, PWSTR, RECT, WPARAM},
     Globalization::lstrlenW,
-    Graphics::Gdi::{ClientToScreen, InvalidateRgn, HMONITOR, HRGN},
+    Graphics::Gdi::{ClientToScreen, InvalidateRgn, HBITMAP, HMONITOR, HRGN},
     System::LibraryLoader::*,
     UI::{
       HiDpi::*,
@@ -279,17 +279,14 @@ pub fn get_hbitmap_from_hicon(hicon: HICON, width: i32, height: i32) -> Option<H
       return None;
     }
 
-    let hbitmap: HBITMAP;
-    hbitmap = HBITMAP(
-      CopyImage(
-        HANDLE(icon_info.hbmColor.0),
-        IMAGE_BITMAP,
-        width,
-        height,
-        LR_CREATEDIBSECTION,
-      )
-      .0,
-    );
+    let hbitmap: HBITMAP = CopyImage(
+      HANDLE(icon_info.hbmColor),
+      IMAGE_BITMAP,
+      width,
+      height,
+      LR_CREATEDIBSECTION,
+    )
+    .0;
     Some(hbitmap)
   }
 }

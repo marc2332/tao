@@ -9,8 +9,24 @@
   target_os = "openbsd"
 ))]
 
-pub use crate::platform_impl::hit_test;
+pub use crate::platform_impl::{hit_test, EventLoop};
 use crate::window::{Window, WindowBuilder};
+
+pub trait EventLoopExtUnix {
+  fn new_any_thread() -> Self
+  where
+    Self: Sized;
+}
+
+impl<T> EventLoopExtUnix for EventLoop<T> {
+  #[inline]
+  fn new_any_thread() -> Self {
+    EventLoop {
+      event_loop: EventLoop::new(),
+      _marker: ::std::marker::PhantomData,
+    }
+  }
+}
 
 /// Additional methods on `Window` that are specific to Unix.
 pub trait WindowExtUnix {

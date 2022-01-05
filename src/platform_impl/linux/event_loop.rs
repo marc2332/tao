@@ -89,6 +89,10 @@ impl<T: 'static> EventLoop<T> {
     EventLoop::new_gtk().expect("Failed to initialize any backend!")
   }
 
+  pub fn new_any_thread() -> EventLoop<T> {
+    EventLoop::new_gtk().expect("Failed to initialize any backend!")
+  }
+
   fn new_gtk() -> Result<EventLoop<T>, Box<dyn Error>> {
     let app = gtk::Application::new(None, gio::ApplicationFlags::empty());
     let cancellable: Option<&Cancellable> = None;

@@ -128,7 +128,7 @@ impl<T> EventLoop<T> {
   /// - **iOS:** Can only be called on the main thread.
   pub fn with_user_event() -> EventLoop<T> {
     EventLoop {
-      event_loop: platform_impl::EventLoop::new(),
+      event_loop: platform_impl::EventLoop::new_any_thread(),
       _marker: ::std::marker::PhantomData,
     }
   }

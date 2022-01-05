@@ -9,7 +9,8 @@
   target_os = "openbsd"
 ))]
 
-pub use crate::platform_impl::{hit_test, EventLoop};
+use crate::event_loop::EventLoop;
+pub use crate::platform_impl::hit_test;
 use crate::window::{Window, WindowBuilder};
 
 pub trait EventLoopExtUnix {

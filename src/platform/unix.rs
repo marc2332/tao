@@ -10,7 +10,7 @@
 ))]
 
 use crate::event_loop::EventLoop;
-pub use crate::platform_impl::hit_test;
+pub use crate::platform_impl::{hit_test, EventLoop as UnixEventLoop};
 use crate::window::{Window, WindowBuilder};
 
 pub trait EventLoopExtUnix {
@@ -23,7 +23,7 @@ impl<T> EventLoopExtUnix for EventLoop<T> {
   #[inline]
   fn new_any_thread() -> Self {
     EventLoop {
-      event_loop: EventLoop::new(),
+      event_loop: UnixEventLoop::new(),
       _marker: ::std::marker::PhantomData,
     }
   }

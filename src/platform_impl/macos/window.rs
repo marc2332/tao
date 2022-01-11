@@ -343,11 +343,6 @@ impl UnownedWindow {
     mut win_attribs: WindowAttributes,
     pl_attribs: PlatformSpecificWindowBuilderAttributes,
   ) -> Result<(Arc<Self>, IdRef), RootOsError> {
-    unsafe {
-      if !msg_send![class!(NSThread), isMainThread] {
-        panic!("Windows can only be created on the main thread on macOS");
-      }
-    }
     trace!("Creating new window");
 
     let pool = unsafe { NSAutoreleasePool::new(nil) };

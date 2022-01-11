@@ -106,9 +106,6 @@ pub struct EventLoop<T: 'static> {
 impl<T> EventLoop<T> {
   pub fn new() -> Self {
     let delegate = unsafe {
-      if !msg_send![class!(NSThread), isMainThread] {
-        panic!("On macOS, `EventLoop` must be created on the main thread!");
-      }
 
       // This must be done before `NSApp()` (equivalent to sending
       // `sharedApplication`) is called anywhere else, or we'll end up

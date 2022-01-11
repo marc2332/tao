@@ -149,8 +149,6 @@ macro_rules! main_thread_check {
 
 impl<T: 'static> EventLoop<T> {
   pub fn new() -> EventLoop<T> {
-    main_thread_check!("new_any_thread");
-
     Self::new_any_thread()
   }
 
